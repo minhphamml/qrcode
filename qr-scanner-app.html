@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code Scanner</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- QR Scanner Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qr-scanner/1.4.2/qr-scanner.umd.min.js"></script>
+    
+    <!-- Firebase SDK -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-app-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-firestore-compat.min.js"></script>
+    
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .scanner-container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        
+        #qr-video {
+            width: 100%;
+            max-width: 400px;
+            height: 300px;
+            border-radius: 10px;
+            object-fit: cover;
+        }
+        
+        .result-card {
+            background: linear-gradient(45deg, #28a745, #20c997);
+            color: white;
+            border-radius: 10px;
+            animation: slideIn 0.5s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .status-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 10;
+        }
+        
+        .scan-history {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .history-item {
+            border-left: 4px solid #007bff;
+            background: #f8f9fa;
+            margin-bottom: 10px;
+            transition: all 0.3s ease;
+        }
+        
+        .history-item:hover {
+            background: #e9ecef;
+            transform: translateX(5px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container py-4">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <!-- Header -->
+                <div class="text-center mb-4">
+                    <h1 class="text-white mb-3">
+                        <i class="bi bi-qr-code-scan"></i> QR Code Scanner
+                    </h1>
+                    <p class="text-light">Scan QR codes and store results in Firebase</p>
+                </div>
+                
+                <!-- Scanner Section -->
+                <div class="scanner-container p-4 mb-4">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="position-relative">
+                                <span class="status-badge badge bg-secondary" id="camera-status">Initializing...</span>
+                                <video id="qr-video" class="w-100" muted playsinline></video>
+                            </div>
+                            
+                            <div class="mt-3 text-center">
+                                <button id="start-btn" class="btn btn-success me-2">
+                                    <i class="bi bi-play"></i> Start Scanner
+                                </button>
+                                <button id="stop-btn" class="btn btn-danger" disabled>
+                                    <i class="bi bi-stop"></i> Stop Scanner
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <!-- Result Display -->
+                            <div id="result-container" style="display: none;">
+                                <div class="result-card p-3 mb-3">
+                                    <h5><i class="bi bi-check-circle"></i> Scan Result</h5>
+                                    <div id="qr-result" class="mt-2"></div>
+                                    <small class="d-block mt-2" id="scan-timestamp"></small>
+                                </div>
+                            </div>
+                            
+                            <!-- Firebase Status -->
+                            <div class="alert alert-info" id="firebase-status">
+                                <i class="bi bi-cloud"></i> <span id="firebase-msg">Connecting to Firebase...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Scan History -->
+                <div class="scanner-container p-4">
+                    <h5 class="mb-3"><i class="bi bi-clock-history"></i> Scan History</h5>
+                    <div class="scan-history" id="scan-history">
+                        <div class="text-muted text-center py-3">
+                            <i class="bi bi-inbox display-4"></i>
+                            <p>No scans yet. Start scanning to see history!</p>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <button id="clear-history" class="btn btn-outline-danger btn-sm">
+                            <i class="bi bi-trash"></i> Clear History
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.10.0/font/bootstrap-icons.min.css">
+
+    <script>
+        // Firebase Configuration (Replace with your config)
+		// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+		const firebaseConfig = {
+		  apiKey: "AIzaSyC6FaFiBwmHEWjR7ai4tztd5eDu5VD43Sc",
+		  authDomain: "carseat-23d19.firebaseapp.com",
+		  projectId: "carseat-23d19",
+		  storageBucket: "carseat-23d19.firebasestorage.app",
+		  messagingSenderId: "476145178811",
+		  appId: "1:476145178811:web:95ba24bcb6bee118c2319e",
+		  measurementId: "G-W6ME5WXNFB"
+		};
+
+        // Initialize Firebase
+        let db;
+        try {
+            firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore();
+            updateFirebaseStatus('Connected to Firebase', 'success');
+        } catch (error) {
+            console.error('Firebase initialization error:', error);
+            updateFirebaseStatus('Firebase connection failed', 'danger');
+        }
+
+        // QR Scanner variables
+        let qrScanner;
+        const video = document.getElementById('qr-video');
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const resultContainer = document.getElementById('result-container');
+        const qrResult = document.getElementById('qr-result');
+        const scanTimestamp = document.getElementById('scan-timestamp');
+        const cameraStatus = document.getElementById('camera-status');
+        const scanHistory = document.getElementById('scan-history');
+
+        // Initialize QR Scanner
+        function initScanner() {
+            qrScanner = new QrScanner(
+                video,
+                result => handleScanResult(result),
+                {
+                    onDecodeError: err => {
+                        console.log('Decode error:', err);
+                    },
+                    highlightScanRegion: true,
+                    highlightCodeOutline: true,
+                    preferredCamera: 'environment' // Use back camera on mobile
+                }
+            );
+        }
+
+        // Handle QR scan result
+        function handleScanResult(result) {
+            const data = result.data;
+            const timestamp = new Date().toLocaleString();
+            
+            // Display result
+            qrResult.textContent = data;
+            scanTimestamp.textContent = `Scanned at: ${timestamp}`;
+            resultContainer.style.display = 'block';
+            
+            // Store in Firebase
+            if (db) {
+                saveToFirebase(data, timestamp);
+            }
+            
+            // Add to local history
+            addToHistory(data, timestamp);
+            
+            // Vibrate if supported (mobile)
+            if (navigator.vibrate) {
+                navigator.vibrate(200);
+            }
+        }
+
+        // Save to Firebase
+        async function saveToFirebase(data, timestamp) {
+            try {
+                await db.collection('qr_scans').add({
+                    content: data,
+                    timestamp: timestamp,
+                    date: firebase.firestore.FieldValue.serverTimestamp(),
+                    userAgent: navigator.userAgent
+                });
+                updateFirebaseStatus('Data saved to Firebase', 'success');
+                console.log('Data saved to Firebase');
+            } catch (error) {
+                console.error('Error saving to Firebase:', error);
+                updateFirebaseStatus('Error saving to Firebase', 'warning');
+            }
+        }
+
+        // Update Firebase status
+        function updateFirebaseStatus(message, type) {
+            const statusEl = document.getElementById('firebase-status');
+            const msgEl = document.getElementById('firebase-msg');
+            
+            statusEl.className = `alert alert-${type}`;
+            msgEl.textContent = message;
+        }
+
+        // Add to scan history
+        function addToHistory(data, timestamp) {
+            const historyContainer = document.getElementById('scan-history');
+            
+            // Clear empty state
+            if (historyContainer.querySelector('.text-muted')) {
+                historyContainer.innerHTML = '';
+            }
+            
+            const historyItem = document.createElement('div');
+            historyItem.className = 'history-item p-3 rounded';
+            historyItem.innerHTML = `
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <strong>QR Content:</strong>
+                        <div class="text-break mt-1">${data}</div>
+                    </div>
+                    <button class="btn btn-sm btn-outline-danger ms-2" onclick="removeHistoryItem(this)">
+                        <i class="bi bi-x"></i>
+                    </button>
+                </div>
+                <small class="text-muted mt-2 d-block">
+                    <i class="bi bi-clock"></i> ${timestamp}
+                </small>
+            `;
+            
+            historyContainer.insertBefore(historyItem, historyContainer.firstChild);
+        }
+
+        // Remove history item
+        function removeHistoryItem(btn) {
+            btn.closest('.history-item').remove();
+            
+            // Show empty state if no items left
+            if (document.querySelectorAll('.history-item').length === 0) {
+                document.getElementById('scan-history').innerHTML = `
+                    <div class="text-muted text-center py-3">
+                        <i class="bi bi-inbox display-4"></i>
+                        <p>No scans yet. Start scanning to see history!</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Start camera and scanning
+        async function startScanning() {
+            try {
+                cameraStatus.textContent = 'Starting camera...';
+                cameraStatus.className = 'status-badge badge bg-warning';
+                
+                await qrScanner.start();
+                
+                cameraStatus.textContent = 'Camera active';
+                cameraStatus.className = 'status-badge badge bg-success';
+                
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+                console.log('Scanner started successfully');
+            } catch (error) {
+                console.error('Error starting scanner:', error);
+                cameraStatus.textContent = 'Camera error';
+                cameraStatus.className = 'status-badge badge bg-danger';
+                
+                // Try to request permissions explicitly
+                try {
+                    await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                    // Retry starting scanner
+                    await qrScanner.start();
+                    cameraStatus.textContent = 'Camera active';
+                    cameraStatus.className = 'status-badge badge bg-success';
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                } catch (permError) {
+                    alert('Camera permission required. Please allow camera access and try again.');
+                }
+            }
+        }
+
+        // Stop scanning
+        function stopScanning() {
+            qrScanner.stop();
+            cameraStatus.textContent = 'Camera stopped';
+            cameraStatus.className = 'status-badge badge bg-secondary';
+            
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
+
+        // Clear scan history
+        function clearHistory() {
+            if (confirm('Are you sure you want to clear all scan history?')) {
+                document.getElementById('scan-history').innerHTML = `
+                    <div class="text-muted text-center py-3">
+                        <i class="bi bi-inbox display-4"></i>
+                        <p>No scans yet. Start scanning to see history!</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Load Firebase history on page load
+        async function loadFirebaseHistory() {
+            if (!db) return;
+            
+            try {
+                const snapshot = await db.collection('qr_scans')
+                    .orderBy('date', 'desc')
+                    .limit(10)
+                    .get();
+                
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    addToHistory(data.content, data.timestamp);
+                });
+            } catch (error) {
+                console.error('Error loading history:', error);
+            }
+        }
+
+        // Event listeners
+        startBtn.addEventListener('click', startScanning);
+        stopBtn.addEventListener('click', stopScanning);
+        document.getElementById('clear-history').addEventListener('click', clearHistory);
+
+        // Initialize everything when page loads
+        window.addEventListener('load', () => {
+            initScanner();
+            loadFirebaseHistory();
+            
+            // Auto-start camera on mobile devices (Android)
+            if (/Android/i.test(navigator.userAgent)) {
+                setTimeout(() => {
+                    startScanning();
+                }, 1000);
+            }
+        });
+
+        // Handle page visibility changes (pause/resume scanner)
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && qrScanner) {
+                if (!startBtn.disabled) {
+                    // Scanner was running, restart it
+                    startScanning();
+                }
+            } else if (qrScanner) {
+                qrScanner.stop();
+            }
+        });
+    </script>
+</body>
+</html>
